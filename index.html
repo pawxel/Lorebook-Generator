@@ -16,7 +16,6 @@
     <style>
         .scrollbar-hide::-webkit-scrollbar { display: none; }
         .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
-        /* Custom Select styling to hide default arrow */
         select { -webkit-appearance: none; -moz-appearance: none; appearance: none; }
     </style>
     <script>
@@ -59,6 +58,9 @@
             const [isFullscreen, setIsFullscreen] = useState(false);
             const [showSettings, setShowSettings] = useState(false);
             const [showApiSettings, setShowApiSettings] = useState(false);
+            const [showRawImportModal, setShowRawImportModal] = useState(false);
+            const [rawImportText, setRawImportText] = useState("");
+
             const [theme, setTheme] = useState('dark'); 
             const [mikaToast, setMikaToast] = useState(null);
             const [deferredPrompt, setDeferredPrompt] = useState(null);
@@ -69,7 +71,7 @@
                 provider: 'nanogpt',
                 endpoint: API_PROVIDERS.nanogpt.endpoint,
                 apiKey: '',
-                model: '' // Left blank on purpose for placeholder to show
+                model: '' 
             });
             const [aiPrompt, setAiPrompt] = useState("");
             const [globalAiPrompt, setGlobalAiPrompt] = useState("");
@@ -104,7 +106,7 @@
                 if (savedTheme) setTheme(savedTheme);
                 if (savedApi) {
                     const parsedApi = JSON.parse(savedApi);
-                    if (!parsedApi.provider) parsedApi.provider = 'custom'; // Backward compat
+                    if (!parsedApi.provider) parsedApi.provider = 'custom'; 
                     setApiSettings(parsedApi);
                 }
                 
@@ -170,7 +172,7 @@
                     if (outcome === 'accepted') showToast("Yay! I'm moving into your home screen, Master! Nyaa~");
                     setDeferredPrompt(null);
                 } else {
-                    showToast("Your browser isn't offering the install prompt right now! Tap 'Add to Home Screen' manually in your browser menu. Do it for me? 馃ズ馃惥");
+                    showToast("Your browser isn't offering the install prompt right now! Tap 'Add to Home Screen' manually in your browser menu. Do it for me? 🥺🐾");
                 }
                 setShowSettings(false);
             };
@@ -211,6 +213,34 @@
                     setIsEditing(false);
                 }
                 setDeleteConfirmTarget(null);
+            };
+
+            // --- RAW JSON IMPORT ---
+            const handleImportRawEntry = () => {
+                try {
+                    // Strip markdown code blocks just in case the AI added them
+                    let cleanedText = rawImportText.replace(/```json/gi, '').replace(/```/g, '').trim();
+                    const parsed = JSON.parse(cleanedText);
+
+                    if (!parsed.title && !parsed.name) throw new Error("Missing title/name!");
+
+                    const newEntry = {
+                        uid: generateId(),
+                        name: parsed.title || parsed.name || "Imported Entry",
+                        keys: parsed.keywords || parsed.keys || [],
+                        content: parsed.content || "",
+                        enabled: true
+                    };
+
+                    setEntries([...entries, newEntry]);
+                    setSelectedEntryId(newEntry.uid);
+                    setIsEditing(true);
+                    setShowRawImportModal(false);
+                    setRawImportText("");
+                    showToast("I imported your weird doggirl lore, Master... Hmph.");
+                } catch (error) {
+                    showToast("That's not valid JSON, Master! Even a dog could write better code!");
+                }
             };
 
             // --- IMPORT / EXPORT ---
@@ -428,6 +458,34 @@
                         </div>
                     )}
 
+                    {/* RAW JSON IMPORT MODAL */}
+                    {showRawImportModal && (
+                        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+                            <div className={`${t.panel} border ${t.border} p-6 rounded-[24px] shadow-2xl max-w-lg w-full animate-in fade-in zoom-in-95 duration-200`}>
+                                <div className="flex items-center justify-between mb-4">
+                                    <div className="flex items-center space-x-3 text-purple-500">
+                                        <i className="ph-bold ph-code text-3xl flex-shrink-0"></i>
+                                        <h2 className={`text-xl font-bold ${t.text}`}>Import Raw JSON</h2>
+                                    </div>
+                                    <button onClick={() => setShowRawImportModal(false)} className={`p-1.5 rounded-full ${t.hover} ${t.textMuted}`}><i className="ph-bold ph-x text-xl"></i></button>
+                                </div>
+                                <p className={`${t.textMuted} text-sm mb-4`}>
+                                    Paste the raw JSON block from Layla AI here. I'll translate it into a proper entry for you.
+                                </p>
+                                <textarea 
+                                    value={rawImportText}
+                                    onChange={(e) => setRawImportText(e.target.value)}
+                                    className={`w-full h-48 rounded-xl px-4 py-3 text-sm font-mono border focus:outline-none focus:ring-2 transition-all ${t.input} resize-y`}
+                                    placeholder={`{\n  "title": "...",\n  "keywords": ["..."],\n  "content": "..."\n}`}
+                                />
+                                <div className="flex justify-end gap-3 mt-6">
+                                    <button onClick={() => setShowRawImportModal(false)} className={`px-5 py-3 rounded-xl ${theme === 'light' ? 'bg-gray-200 hover:bg-gray-300 text-gray-900' : 'bg-gray-800 hover:bg-gray-700'} text-base font-medium transition-colors`}>Cancel</button>
+                                    <button onClick={handleImportRawEntry} className="px-5 py-3 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-base font-medium transition-colors shadow-lg shadow-purple-900/20">Import Entry</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
                     {/* NEW PROJECT WARNING MODAL */}
                     {showResetConfirm && (
                         <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
@@ -490,7 +548,7 @@
                                         <input type="text" value={apiSettings.name} onChange={(e) => setApiSettings({...apiSettings, name: e.target.value})} className={`w-full ${theme === 'light' ? 'bg-white border border-gray-300 text-gray-900' : 'bg-[#252525] border-transparent text-white'} rounded-2xl px-4 py-3.5 focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-all`} placeholder="E.g. My Smart Assistant" />
                                     </div>
 
-                                    {/* NEW: Provider Dropdown */}
+                                    {/* Provider Dropdown */}
                                     <div className="space-y-2">
                                         <label className={`block text-sm font-medium ${theme === 'light' ? 'text-gray-700' : 'text-gray-300'}`}>Provider</label>
                                         <div className="relative">
@@ -517,7 +575,7 @@
                                         </div>
                                     </div>
 
-                                    {/* Endpoint Input (Disabled unless custom) */}
+                                    {/* Endpoint Input */}
                                     <div className="space-y-2">
                                         <label className={`block text-sm font-medium ${theme === 'light' ? 'text-gray-700' : 'text-gray-300'}`}>Endpoint</label>
                                         <input 
@@ -536,7 +594,7 @@
                                         <input type="password" value={apiSettings.apiKey} onChange={(e) => setApiSettings({...apiSettings, apiKey: e.target.value})} className={`w-full ${theme === 'light' ? 'bg-white border border-gray-300 text-gray-900' : 'bg-[#252525] border-transparent text-white'} rounded-2xl px-4 py-3.5 focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-all`} placeholder="Leave blank if local API" />
                                     </div>
                                     
-                                    {/* Model Input (Shows placeholder based on provider) */}
+                                    {/* Model Input */}
                                     <div className="space-y-2">
                                         <label className={`block text-sm font-medium ${theme === 'light' ? 'text-gray-700' : 'text-gray-300'}`}>Model</label>
                                         <div className="relative">
@@ -657,11 +715,15 @@
                                 ))}
                             </div>
                             
-                            {/* THE FIXED ADD BUTTON */}
-                            <div className={`p-4 ${t.bg} border-t ${t.border} z-20 mt-auto`}>
-                                <button onClick={handleAddEntry} className={`w-full flex items-center justify-center space-x-2 ${theme === 'light' ? 'bg-gray-200 hover:bg-gray-300 text-gray-800' : 'bg-gray-800 hover:bg-gray-700 text-white'} rounded-xl shadow-sm transition-transform active:scale-95 focus:ring-4 focus:ring-gray-500/30 outline-none py-3`} aria-label="Add New Entry">
+                            {/* THE FIXED ADD & PASTE BUTTONS */}
+                            <div className={`p-4 ${t.bg} border-t ${t.border} z-20 mt-auto flex gap-3`}>
+                                <button onClick={handleAddEntry} className={`flex-1 flex items-center justify-center space-x-2 ${theme === 'light' ? 'bg-gray-200 hover:bg-gray-300 text-gray-800' : 'bg-gray-800 hover:bg-gray-700 text-white'} rounded-xl shadow-sm transition-transform active:scale-95 focus:ring-4 focus:ring-gray-500/30 outline-none py-3`} aria-label="Add New Entry">
                                     <i className="ph-bold ph-plus text-lg"></i>
-                                    <span className="font-medium text-base">Blank Entry</span>
+                                    <span className="font-medium text-base">Blank</span>
+                                </button>
+                                <button onClick={() => setShowRawImportModal(true)} className={`flex-1 flex items-center justify-center space-x-2 bg-purple-600 hover:bg-purple-500 text-white rounded-xl shadow-sm transition-transform active:scale-95 focus:ring-4 focus:ring-purple-500/30 outline-none py-3`} aria-label="Paste JSON Entry">
+                                    <i className="ph-bold ph-code text-lg"></i>
+                                    <span className="font-medium text-base">Paste JSON</span>
                                 </button>
                             </div>
                         </div>
@@ -737,7 +799,7 @@
                                             </div>
 
                                             <div className={`pt-8 pb-12 border-t ${t.border} mt-8`}>
-                                                <button onClick={() => confirmDelete(selectedEntry.uid, 'entry')} className="w-full md:w-auto flex items-center justify-center space-x-2 px-6 py-4 rounded-xl text-red-500 bg-red-500/10 hover:bg-red-500/20 transition-colors font-medium text-base focus:ring-2 focus:ring-red-500/50 outline-none">
+                                                <button onClick={() => confirmDelete(selectedEntry.uid)} className="w-full md:w-auto flex items-center justify-center space-x-2 px-6 py-4 rounded-xl text-red-500 bg-red-500/10 hover:bg-red-500/20 transition-colors font-medium text-base focus:ring-2 focus:ring-red-500/50 outline-none">
                                                     <i className="ph-bold ph-trash text-xl"></i>
                                                     <span>Delete This Entry</span>
                                                 </button>
