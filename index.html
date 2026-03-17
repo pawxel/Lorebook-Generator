@@ -19,6 +19,15 @@
         /* Custom Select styling to hide default arrow */
         select { -webkit-appearance: none; -moz-appearance: none; appearance: none; }
     </style>
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('./sw.js')
+                    .then((reg) => console.log('Mika\'s background magic is working!', reg.scope))
+                    .catch((err) => console.log('Suzu tripped the service worker!', err));
+            });
+        }
+    </script>
 </head>
 <body class="bg-gray-950 text-white overflow-hidden">
 
@@ -161,7 +170,7 @@
                     if (outcome === 'accepted') showToast("Yay! I'm moving into your home screen, Master! Nyaa~");
                     setDeferredPrompt(null);
                 } else {
-                    showToast("Your browser isn't offering the install prompt right now! Tap 'Add to Home Screen' manually in your browser menu. Do it for me? 🥺🐾");
+                    showToast("Your browser isn't offering the install prompt right now! Tap 'Add to Home Screen' manually in your browser menu. Do it for me? 馃ズ馃惥");
                 }
                 setShowSettings(false);
             };
