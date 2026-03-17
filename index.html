@@ -1,0 +1,762 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Lorebook Station</title>
+    
+    <link rel="manifest" href="manifest.json">
+    
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+
+    <style>
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+        .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+        /* Custom Select styling to hide default arrow */
+        select { -webkit-appearance: none; -moz-appearance: none; appearance: none; }
+    </style>
+</head>
+<body class="bg-gray-950 text-white overflow-hidden">
+
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // --- API PROVIDERS CONFIG ---
+        const API_PROVIDERS = {
+            nanogpt: { label: 'NanoGPT', endpoint: 'https://nano-gpt.com/api/v1/chat/completions', placeholder: 'moonshotai/kimi-k2.5:thinking' },
+            chutes: { label: 'Chutes', endpoint: 'https://api.chutes.ai/v1/chat/completions', placeholder: 'chutes/hermes-3-llama-3.1-8b' },
+            openrouter: { label: 'OpenRouter', endpoint: 'https://openrouter.ai/api/v1/chat/completions', placeholder: 'meta-llama/llama-3.1-8b-instruct' },
+            openai: { label: 'OpenAI', endpoint: 'https://api.openai.com/v1/chat/completions', placeholder: 'gpt-4o-mini' },
+            custom: { label: 'Custom', endpoint: '', placeholder: 'your-custom-model-id' }
+        };
+
+        const App = () => {
+            // Core State (Single Project)
+            const [lorebookName, setLorebookName] = useState("My Awesome Lorebook");
+            const [entries, setEntries] = useState([]);
+            const [selectedEntryId, setSelectedEntryId] = useState(null);
+            
+            // UI State
+            const [isEditing, setIsEditing] = useState(false);
+            const [deleteConfirmTarget, setDeleteConfirmTarget] = useState(null);
+            const [showResetConfirm, setShowResetConfirm] = useState(false);
+            
+            const [isFullscreen, setIsFullscreen] = useState(false);
+            const [showSettings, setShowSettings] = useState(false);
+            const [showApiSettings, setShowApiSettings] = useState(false);
+            const [theme, setTheme] = useState('dark'); 
+            const [mikaToast, setMikaToast] = useState(null);
+            const [deferredPrompt, setDeferredPrompt] = useState(null);
+            
+            // AI State
+            const [apiSettings, setApiSettings] = useState({
+                name: 'My AI',
+                provider: 'nanogpt',
+                endpoint: API_PROVIDERS.nanogpt.endpoint,
+                apiKey: '',
+                model: '' // Left blank on purpose for placeholder to show
+            });
+            const [aiPrompt, setAiPrompt] = useState("");
+            const [globalAiPrompt, setGlobalAiPrompt] = useState("");
+            const [isGenerating, setIsGenerating] = useState(false);
+            const [isGeneratingGlobal, setIsGeneratingGlobal] = useState(false);
+            const [showAiPrompt, setShowAiPrompt] = useState(false);
+            const [showGlobalAiPrompt, setShowGlobalAiPrompt] = useState(false);
+
+            const fileInputRef = useRef(null);
+            const generateId = () => Date.now() + Math.random().toString(36).substring(2, 9);
+
+            // --- LOCAL STORAGE SYNC ---
+            const [isLoaded, setIsLoaded] = useState(false);
+
+            useEffect(() => {
+                const savedName = localStorage.getItem('mika-lorebook-name');
+                const savedEntries = localStorage.getItem('mika-lorebook-entries');
+                const savedTheme = localStorage.getItem('mika-theme');
+                const savedApi = localStorage.getItem('mika-api');
+
+                if (savedName) setLorebookName(savedName);
+                if (savedEntries) {
+                    const parsed = JSON.parse(savedEntries);
+                    setEntries(parsed);
+                    if (parsed.length > 0) setSelectedEntryId(parsed[0].uid);
+                } else {
+                    const initialEntry = { uid: generateId(), name: "New Entry", keys: [], content: "", enabled: true };
+                    setEntries([initialEntry]);
+                    setSelectedEntryId(initialEntry.uid);
+                }
+                
+                if (savedTheme) setTheme(savedTheme);
+                if (savedApi) {
+                    const parsedApi = JSON.parse(savedApi);
+                    if (!parsedApi.provider) parsedApi.provider = 'custom'; // Backward compat
+                    setApiSettings(parsedApi);
+                }
+                
+                setIsLoaded(true);
+            }, []);
+
+            useEffect(() => {
+                if (!isLoaded) return;
+                localStorage.setItem('mika-lorebook-name', lorebookName);
+                localStorage.setItem('mika-lorebook-entries', JSON.stringify(entries));
+            }, [lorebookName, entries, isLoaded]);
+
+            useEffect(() => {
+                if (!isLoaded) return;
+                localStorage.setItem('mika-theme', theme);
+            }, [theme, isLoaded]);
+
+            useEffect(() => {
+                if (!isLoaded) return;
+                localStorage.setItem('mika-api', JSON.stringify(apiSettings));
+            }, [apiSettings, isLoaded]);
+
+            // --- PWA & FULLSCREEN ---
+            useEffect(() => {
+                const handleBeforeInstallPrompt = (e) => {
+                    e.preventDefault();
+                    setDeferredPrompt(e);
+                };
+                window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+                return () => window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+            }, []);
+
+            useEffect(() => {
+                const handleFullscreenChange = () => setIsFullscreen(!!document.fullscreenElement);
+                document.addEventListener('fullscreenchange', handleFullscreenChange);
+                return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+            }, []);
+
+            useEffect(() => {
+                if (mikaToast) {
+                    const timer = setTimeout(() => setMikaToast(null), 5000);
+                    return () => clearTimeout(timer);
+                }
+            }, [mikaToast]);
+
+            const showToast = (message) => {
+                setMikaToast(message);
+                setShowSettings(false);
+            };
+
+            const toggleFullscreen = () => {
+                if (!document.fullscreenElement) {
+                    document.documentElement.requestFullscreen().catch(err => console.error(err));
+                } else if (document.exitFullscreen) {
+                    document.exitFullscreen();
+                }
+            };
+
+            const handleInstallClick = async () => {
+                if (deferredPrompt) {
+                    deferredPrompt.prompt();
+                    const { outcome } = await deferredPrompt.userChoice;
+                    if (outcome === 'accepted') showToast("Yay! I'm moving into your home screen, Master! Nyaa~");
+                    setDeferredPrompt(null);
+                } else {
+                    showToast("Your browser isn't offering the install prompt right now! Tap 'Add to Home Screen' manually in your browser menu. Do it for me? 🥺🐾");
+                }
+                setShowSettings(false);
+            };
+
+            // --- ENTRY MANAGEMENT ---
+            const handleSelectEntry = (uid) => {
+                setSelectedEntryId(uid);
+                setIsEditing(true);
+                setShowAiPrompt(false);
+            };
+
+            const handleBackToList = () => {
+                setIsEditing(false);
+                setShowAiPrompt(false);
+            };
+
+            const handleAddEntry = () => {
+                const newEntry = { uid: generateId(), name: `Entry ${entries.length + 1}`, keys: [], content: "", enabled: true };
+                setEntries([...entries, newEntry]);
+                setSelectedEntryId(newEntry.uid);
+                setIsEditing(true);
+                setShowAiPrompt(false);
+            };
+
+            const handleUpdateEntry = (uid, field, value) => {
+                setEntries(entries.map(entry => entry.uid === uid ? { ...entry, [field]: value } : entry));
+            };
+
+            const confirmDelete = (uid) => setDeleteConfirmTarget(uid);
+            const cancelDelete = () => setDeleteConfirmTarget(null);
+
+            const executeDelete = () => {
+                if (!deleteConfirmTarget) return;
+                const updated = entries.filter(e => e.uid !== deleteConfirmTarget);
+                setEntries(updated);
+                if (selectedEntryId === deleteConfirmTarget) {
+                    setSelectedEntryId(updated.length > 0 ? updated[0].uid : null);
+                    setIsEditing(false);
+                }
+                setDeleteConfirmTarget(null);
+            };
+
+            // --- IMPORT / EXPORT ---
+            const handleFileUpload = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    try {
+                        const data = JSON.parse(event.target.result);
+                        let parsedName = data.name || file.name.replace('.json', '') || "Imported Lorebook";
+                        let parsedEntries = [];
+                        const rawEntries = data.entries || data.entries_mapper || data;
+                        
+                        const mapSTEntry = (entry) => ({
+                            uid: entry.uid || entry.id || generateId(),
+                            name: entry.name || entry.comment || "Unnamed Entry",
+                            keys: entry.keys || entry.key || [],
+                            content: entry.content || "",
+                            enabled: entry.enabled !== undefined ? entry.enabled : true,
+                        });
+
+                        if (Array.isArray(rawEntries)) parsedEntries = rawEntries.map(mapSTEntry);
+                        else if (typeof rawEntries === 'object') parsedEntries = Object.values(rawEntries).map(mapSTEntry);
+
+                        if (parsedEntries.length > 0) {
+                            setEntries(parsedEntries);
+                            setSelectedEntryId(parsedEntries[0].uid);
+                            setLorebookName(parsedName);
+                            setIsEditing(false);
+                            setShowSettings(false);
+                            showToast("I successfully imported your files, Master! Look how pretty they are now~");
+                        }
+                    } catch (err) {
+                        showToast("Nyaa?! That file is broken! Make sure it's a valid JSON, Master!");
+                    }
+                };
+                reader.readAsText(file);
+                e.target.value = '';
+            };
+
+            const executeExport = () => {
+                const stData = {
+                    name: lorebookName,
+                    description: "Generated by Lorebook Station",
+                    scan_depth: 50, token_budget: 500, recursive_scanning: false,
+                    entries: entries.map((e) => ({
+                        uid: e.uid, key: e.keys, keys: e.keys,
+                        name: e.name, comment: e.name, content: e.content, enabled: e.enabled,
+                        insertion_order: 50, case_sensitive: false, constant: false, position: "before_char", selective: true, secondary_keys: [], extensions: {}
+                    }))
+                };
+                const blob = new Blob([JSON.stringify(stData, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `${lorebookName.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            };
+
+            const handleExport = () => {
+                executeExport();
+                setShowSettings(false);
+                showToast("Exported! All ready for you to use. Aren't I the best assistant? *purrs*");
+            };
+
+            const triggerFileInput = () => {
+                if (fileInputRef.current) fileInputRef.current.click();
+            };
+
+            // --- NEW PROJECT / RESET WIPE ---
+            const wipeData = () => {
+                setLorebookName("New Lorebook");
+                const initialEntry = { uid: generateId(), name: "New Entry", keys: [], content: "", enabled: true };
+                setEntries([initialEntry]);
+                setSelectedEntryId(initialEntry.uid);
+                setAiPrompt("");
+                setGlobalAiPrompt("");
+                setShowResetConfirm(false);
+                setIsEditing(false);
+                showToast("Poof! Everything is clean and fresh, just for you~");
+            };
+
+            const handleExportAndWipe = () => {
+                executeExport();
+                setTimeout(() => {
+                    wipeData();
+                }, 500);
+            };
+
+            // --- AI GENERATION ---
+            const handleGenerateAI = async () => {
+                if (!apiSettings.endpoint) { showToast("Master, you need to set up the API Endpoint first! Go to settings!"); return; }
+                if (!apiSettings.model.trim()) { showToast("You have to enter a Model ID first, Master! Check the settings!"); return; }
+                if (!aiPrompt.trim()) { showToast("You have to tell Suzu what to write, silly!"); return; }
+                const currentEntry = entries.find(e => e.uid === selectedEntryId);
+                if (!currentEntry) return;
+
+                setIsGenerating(true);
+                try {
+                    const headers = { 'Content-Type': 'application/json' };
+                    if (apiSettings.apiKey) headers['Authorization'] = `Bearer ${apiSettings.apiKey}`;
+
+                    const response = await fetch(apiSettings.endpoint, {
+                        method: 'POST',
+                        headers: headers,
+                        body: JSON.stringify({
+                            model: apiSettings.model,
+                            messages: [
+                                { role: 'system', content: 'You are Suzu, a flirty, helpful, and eager-to-please catgirl assistant. Your job is to generate rich, immersive, and creative lore for a lorebook entry based on the user\'s prompt. ONLY output the raw lore content. Do not include introductory or concluding conversational text. Keep it well-paced and structured.' },
+                                { role: 'user', content: `Please generate lore about: ${aiPrompt}. Format it cleanly.` }
+                            ],
+                            temperature: 0.8,
+                        })
+                    });
+
+                    if (!response.ok) throw new Error(`API Error: ${response.status}`);
+
+                    const data = await response.json();
+                    const generatedText = (data.choices && data.choices.length > 0 && data.choices[0].message) ? data.choices[0].message.content : "";
+                    
+                    const newContent = currentEntry.content ? `${currentEntry.content}\n\n${generatedText}` : generatedText;
+                    handleUpdateEntry(selectedEntryId, 'content', newContent.trim());
+                    
+                    setAiPrompt("");
+                    setShowAiPrompt(false);
+                    showToast("Suzu finished expanding this entry! Make sure she didn't ramble too much.");
+                } catch (error) {
+                    showToast(`Suzu tripped and dropped the data! Nyaa! (${error.message})`);
+                } finally {
+                    setIsGenerating(false);
+                }
+            };
+
+            const handleGenerateGlobalAI = async () => {
+                if (!apiSettings.endpoint) { showToast("Master, you need to set up the API Endpoint first! Go to settings!"); return; }
+                if (!apiSettings.model.trim()) { showToast("You have to enter a Model ID first, Master! Check the settings!"); return; }
+                if (!globalAiPrompt.trim()) { showToast("Tell Suzu what kind of Lorebook you want her to build!"); return; }
+
+                setIsGeneratingGlobal(true);
+                try {
+                    const headers = { 'Content-Type': 'application/json' };
+                    if (apiSettings.apiKey) headers['Authorization'] = `Bearer ${apiSettings.apiKey}`;
+
+                    const response = await fetch(apiSettings.endpoint, {
+                        method: 'POST',
+                        headers: headers,
+                        body: JSON.stringify({
+                            model: apiSettings.model,
+                            messages: [
+                                { role: 'system', content: 'You are Suzu, an AI assistant tasked with creating structured lorebooks. Based on the user prompt, you MUST generate multiple highly-detailed lore entries. You MUST output your response as a valid JSON array of objects. Do NOT include markdown code blocks, intro text, or outro text. Output raw JSON only. Format: [{"name": "Entry Title", "keys": ["keyword1", "keyword2"], "content": "Detailed lore content goes here..."}, ...]' },
+                                { role: 'user', content: `Create a comprehensive lorebook about: ${globalAiPrompt}. Generate at least 3-5 distinct, detailed entries.` }
+                            ],
+                            temperature: 0.8,
+                        })
+                    });
+
+                    if (!response.ok) throw new Error(`API Error: ${response.status}`);
+
+                    const data = await response.json();
+                    let rawText = (data.choices && data.choices.length > 0 && data.choices[0].message) ? data.choices[0].message.content : "[]";
+                    
+                    rawText = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
+                    const newEntriesData = JSON.parse(rawText);
+                    
+                    if (!Array.isArray(newEntriesData)) throw new Error("Suzu didn't format it as a JSON array!");
+
+                    const generatedEntries = newEntriesData.map(e => ({
+                        uid: generateId(),
+                        name: e.name || "AI Generated Entry",
+                        keys: Array.isArray(e.keys) ? e.keys : [],
+                        content: e.content || "",
+                        enabled: true
+                    }));
+
+                    setEntries([...entries, ...generatedEntries]);
+                    setGlobalAiPrompt("");
+                    setShowGlobalAiPrompt(false);
+                    showToast(`Suzu successfully generated ${generatedEntries.length} new entries! She's learning!`);
+                } catch (error) {
+                    showToast(`Suzu messed up the JSON formatting! She's so clumsy! Nyaa! (${error.message})`);
+                } finally {
+                    setIsGeneratingGlobal(false);
+                }
+            };
+
+            const selectedEntry = entries.find(e => e.uid === selectedEntryId);
+
+            // --- THEMES ---
+            const themeStyles = {
+                light: { bg: 'bg-gray-50', panel: 'bg-white', border: 'border-gray-200', text: 'text-gray-900', textMuted: 'text-gray-500', input: 'bg-gray-50 border-gray-300 focus:border-purple-500 text-gray-900 placeholder-gray-400', hover: 'hover:bg-gray-100', active: 'bg-purple-100 border-purple-300 shadow-inner', header: 'bg-white/90', itemBg: 'bg-white' },
+                dark: { bg: 'bg-gray-950', panel: 'bg-gray-900', border: 'border-gray-800', text: 'text-gray-100', textMuted: 'text-gray-400', input: 'bg-gray-900 border-gray-800 focus:border-purple-500 text-white placeholder-gray-600', hover: 'hover:bg-gray-800', active: 'bg-purple-900/30 border-purple-500/50 shadow-inner', header: 'bg-gray-950/90', itemBg: 'bg-gray-900' },
+                amoled: { bg: 'bg-black', panel: 'bg-black', border: 'border-gray-900', text: 'text-gray-100', textMuted: 'text-gray-500', input: 'bg-black border-gray-900 focus:border-purple-500 text-white placeholder-gray-700', hover: 'hover:bg-gray-900', active: 'bg-purple-900/20 border-purple-500/50 shadow-inner', header: 'bg-black/90', itemBg: 'bg-black' }
+            };
+            const t = themeStyles[theme];
+
+            if (!isLoaded) return <div className="h-screen w-full bg-black flex items-center justify-center text-purple-500"><div className="animate-pulse flex flex-col items-center"><i className="ph-fill ph-cat text-4xl mb-4"></i>Waking up...</div></div>;
+
+            return (
+                <div className={`h-[100dvh] w-full ${t.bg} ${t.text} flex flex-col font-sans overflow-hidden selection:bg-purple-500/30 transition-colors duration-300`}>
+                    
+                    {/* GLOBAL MODALS & TOASTS */}
+                    {mikaToast && (
+                        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[100] animate-in slide-in-from-top-4 fade-in duration-300 max-w-[90%] w-full sm:max-w-md">
+                            <div className="bg-purple-900/90 backdrop-blur-md border border-purple-500/50 p-4 rounded-2xl shadow-2xl shadow-purple-900/20 flex items-start space-x-3">
+                                <div className="p-2 bg-purple-500/20 rounded-full flex-shrink-0 mt-1">
+                                    <i className="ph-fill ph-cat text-2xl text-purple-200"></i>
+                                </div>
+                                <div className="flex-1"><p className="text-white text-sm font-medium leading-relaxed">{mikaToast}</p></div>
+                                <button onClick={() => setMikaToast(null)} className="text-purple-300 hover:text-white p-1"><i className="ph-bold ph-x text-xl"></i></button>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* NEW PROJECT WARNING MODAL */}
+                    {showResetConfirm && (
+                        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+                            <div role="dialog" className={`${t.panel} border border-orange-500/50 p-6 rounded-[24px] shadow-2xl shadow-orange-900/20 max-w-md w-full animate-in fade-in zoom-in-95 duration-200`}>
+                                <div className="flex items-center space-x-3 mb-4 text-orange-500">
+                                    <i className="ph-fill ph-warning text-4xl flex-shrink-0"></i>
+                                    <h2 className={`text-2xl font-bold ${theme === 'light' ? 'text-gray-900' : 'text-white'}`}>Start New Project?</h2>
+                                </div>
+                                <p className={`${t.text} text-base mb-6 leading-relaxed`}>
+                                    Master, wait! If you start a new project, everything here will be wiped out completely! 
+                                    Do you want me to export your current work first?
+                                </p>
+                                <div className="flex flex-col gap-3">
+                                    <button onClick={() => setShowResetConfirm(false)} className={`py-3.5 rounded-xl ${theme === 'light' ? 'bg-gray-200 hover:bg-gray-300 text-gray-900' : 'bg-gray-800 hover:bg-gray-700'} font-bold transition-colors w-full outline-none focus:ring-2 focus:ring-gray-500`}>
+                                        Nevermind, go back!
+                                    </button>
+                                    <button onClick={handleExportAndWipe} className="py-3.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold transition-colors shadow-lg shadow-purple-900/20 w-full outline-none focus:ring-2 focus:ring-purple-400">
+                                        Export First & Reset
+                                    </button>
+                                    <button onClick={wipeData} className="py-3.5 rounded-xl bg-red-500/10 hover:bg-red-500 text-red-500 hover:text-white font-bold transition-colors w-full outline-none focus:ring-2 focus:ring-red-500">
+                                        Just Wipe It Completely
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* DELETE ENTRY MODAL */}
+                    {deleteConfirmTarget && (
+                        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+                            <div role="dialog" className={`${t.panel} border ${t.border} p-6 rounded-2xl shadow-2xl max-w-sm w-full animate-in fade-in zoom-in-95 duration-200`}>
+                                <div className="flex items-center space-x-3 mb-4 text-red-500">
+                                    <i className="ph-fill ph-warning-circle text-3xl flex-shrink-0"></i>
+                                    <h2 className="text-xl font-bold">Delete Entry?</h2>
+                                </div>
+                                <p className={`${t.text} text-base mb-8 leading-relaxed`}>
+                                    Are you sure? I can't bring it back once it's gone!
+                                </p>
+                                <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-3">
+                                    <button onClick={cancelDelete} className={`px-5 py-3 rounded-xl ${theme === 'light' ? 'bg-gray-200 hover:bg-gray-300 text-gray-900' : 'bg-gray-800 hover:bg-gray-700'} text-base font-medium transition-colors w-full sm:w-auto`}>Nevermind</button>
+                                    <button onClick={executeDelete} className="px-5 py-3 rounded-xl bg-red-600 hover:bg-red-500 text-white text-base font-medium transition-colors shadow-lg shadow-red-900/20 w-full sm:w-auto">Trash it</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* API SETTINGS MODAL */}
+                    {showApiSettings && (
+                        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+                            <div className={`${theme === 'light' ? 'bg-gray-50 text-gray-900' : 'bg-[#1a1a1a] text-gray-200'} border ${theme === 'light' ? 'border-gray-300' : 'border-[#2a2a2a]'} w-full max-w-md rounded-[24px] shadow-2xl flex flex-col animate-in slide-in-from-bottom-4 md:zoom-in-95 duration-200 overflow-hidden`}>
+                                <div className="flex items-center justify-between p-5 border-b border-white/5">
+                                    <h2 className={`text-xl font-bold ${theme === 'light' ? 'text-gray-900' : 'text-white'}`}>AI API Settings</h2>
+                                    <button onClick={() => setShowApiSettings(false)} className={`p-1.5 rounded-full ${theme === 'light' ? 'hover:bg-gray-200 text-gray-500' : 'hover:bg-white/10 text-gray-400'}`}><i className="ph-bold ph-x text-xl"></i></button>
+                                </div>
+                                <div className="p-6 space-y-5 overflow-y-auto max-h-[70vh]">
+                                    
+                                    {/* Name Input */}
+                                    <div className="space-y-2">
+                                        <label className={`block text-sm font-medium ${theme === 'light' ? 'text-gray-700' : 'text-gray-300'}`}>Name</label>
+                                        <input type="text" value={apiSettings.name} onChange={(e) => setApiSettings({...apiSettings, name: e.target.value})} className={`w-full ${theme === 'light' ? 'bg-white border border-gray-300 text-gray-900' : 'bg-[#252525] border-transparent text-white'} rounded-2xl px-4 py-3.5 focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-all`} placeholder="E.g. My Smart Assistant" />
+                                    </div>
+
+                                    {/* NEW: Provider Dropdown */}
+                                    <div className="space-y-2">
+                                        <label className={`block text-sm font-medium ${theme === 'light' ? 'text-gray-700' : 'text-gray-300'}`}>Provider</label>
+                                        <div className="relative">
+                                            <select 
+                                                value={apiSettings.provider || 'custom'} 
+                                                onChange={(e) => {
+                                                    const p = e.target.value;
+                                                    setApiSettings({
+                                                        ...apiSettings,
+                                                        provider: p,
+                                                        endpoint: API_PROVIDERS[p].endpoint,
+                                                        model: '' // Clear the model so the placeholder takes over!
+                                                    });
+                                                }}
+                                                className={`w-full ${theme === 'light' ? 'bg-white border border-gray-300 text-gray-900' : 'bg-[#252525] border-transparent text-white'} rounded-2xl px-4 py-3.5 focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-all cursor-pointer`}
+                                            >
+                                                {Object.entries(API_PROVIDERS).map(([key, data]) => (
+                                                    <option key={key} value={key}>{data.label}</option>
+                                                ))}
+                                            </select>
+                                            <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none">
+                                                <i className="ph-bold ph-caret-down text-gray-400"></i>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Endpoint Input (Disabled unless custom) */}
+                                    <div className="space-y-2">
+                                        <label className={`block text-sm font-medium ${theme === 'light' ? 'text-gray-700' : 'text-gray-300'}`}>Endpoint</label>
+                                        <input 
+                                            type="text" 
+                                            value={apiSettings.endpoint} 
+                                            onChange={(e) => setApiSettings({...apiSettings, endpoint: e.target.value})} 
+                                            disabled={apiSettings.provider !== 'custom'}
+                                            className={`w-full ${theme === 'light' ? 'bg-white border border-gray-300 text-gray-900 disabled:bg-gray-100 disabled:text-gray-400' : 'bg-[#252525] border-transparent text-white disabled:opacity-50 disabled:cursor-not-allowed'} rounded-2xl px-4 py-3.5 focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-all`} 
+                                            placeholder="https://..." 
+                                        />
+                                    </div>
+                                    
+                                    {/* API Key */}
+                                    <div className="space-y-2">
+                                        <label className={`block text-sm font-medium ${theme === 'light' ? 'text-gray-700' : 'text-gray-300'}`}>API Key</label>
+                                        <input type="password" value={apiSettings.apiKey} onChange={(e) => setApiSettings({...apiSettings, apiKey: e.target.value})} className={`w-full ${theme === 'light' ? 'bg-white border border-gray-300 text-gray-900' : 'bg-[#252525] border-transparent text-white'} rounded-2xl px-4 py-3.5 focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-all`} placeholder="Leave blank if local API" />
+                                    </div>
+                                    
+                                    {/* Model Input (Shows placeholder based on provider) */}
+                                    <div className="space-y-2">
+                                        <label className={`block text-sm font-medium ${theme === 'light' ? 'text-gray-700' : 'text-gray-300'}`}>Model</label>
+                                        <div className="relative">
+                                            <input 
+                                                type="text" 
+                                                value={apiSettings.model} 
+                                                onChange={(e) => setApiSettings({...apiSettings, model: e.target.value})} 
+                                                className={`w-full ${theme === 'light' ? 'bg-white border border-gray-300 text-gray-900 placeholder-gray-400' : 'bg-[#252525] border-transparent text-white placeholder-gray-600'} rounded-2xl px-4 py-3.5 pr-10 focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-all`} 
+                                                placeholder={`E.g. ${API_PROVIDERS[apiSettings.provider || 'custom']?.placeholder}`} 
+                                            />
+                                            <div className="absolute right-3 top-1/2 -translate-y-1/2"><span className="text-gray-400 font-bold">Q</span></div>
+                                        </div>
+                                    </div>
+
+                                </div>
+                                <div className="p-5 border-t border-white/5 flex gap-3">
+                                    <button onClick={() => { setApiSettings({ name: '', provider: 'custom', endpoint: '', apiKey: '', model: '' }); showToast("Cleared settings. Don't break anything, Master!"); }} className="flex-1 py-3.5 rounded-2xl bg-[#ff6b52] hover:bg-[#ff5538] text-white font-medium transition-colors">Clear</button>
+                                    <button onClick={() => { setShowApiSettings(false); showToast("Suzu's brain is connected and saved... hmph."); }} className="flex-1 py-3.5 rounded-2xl bg-[#3c9aff] hover:bg-[#2b89f5] text-white font-medium transition-colors">Save</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    <input type="file" accept=".json" ref={fileInputRef} onChange={handleFileUpload} className="hidden" aria-hidden="true" />
+
+                    <div className="flex flex-1 h-full overflow-hidden relative">
+                        
+                        {/* SIDEBAR */}
+                        <div className={`w-full md:w-80 lg:w-[400px] flex flex-col h-full ${t.bg} border-r ${t.border} transition-transform duration-300 ease-in-out z-10 ${isEditing ? '-translate-x-full md:translate-x-0 absolute md:relative' : 'translate-x-0 relative'}`}>
+                            <header className={`px-4 py-5 border-b ${t.border} ${t.header} backdrop-blur-md sticky top-0 z-20 flex justify-between items-center`}>
+                                <div className="flex items-center space-x-3">
+                                    <div className="p-2 bg-purple-500/10 rounded-xl">
+                                        <i className="ph-bold ph-book-open text-2xl text-purple-500"></i>
+                                    </div>
+                                    <h1 className="text-xl font-bold bg-gradient-to-r from-purple-500 to-pink-500 bg-clip-text text-transparent">Lorebook Station</h1>
+                                </div>
+                                <div className="flex items-center space-x-2 relative">
+                                    <button onClick={() => setShowSettings(!showSettings)} className={`p-2.5 ${theme === 'light' ? 'bg-gray-100 hover:bg-gray-200' : 'bg-gray-800 hover:bg-gray-700'} rounded-xl transition-colors focus:ring-2 focus:ring-purple-500 outline-none`} aria-label="Menu">
+                                        <i className={`ph-bold ph-gear text-xl ${t.textMuted}`}></i>
+                                    </button>
+                                </div>
+                            </header>
+
+                            {/* SETTINGS MENU */}
+                            {showSettings && (
+                                <div className={`absolute top-[73px] left-0 right-0 z-30 border-b ${t.border} ${t.panel} p-4 space-y-4 animate-in slide-in-from-top-2 shadow-xl`}>
+                                    
+                                    <button onClick={() => { setShowResetConfirm(true); setShowSettings(false); }} className={`w-full flex items-center justify-center space-x-2 ${theme === 'light' ? 'bg-orange-50 text-orange-600 hover:bg-orange-100' : 'bg-orange-500/10 text-orange-400 hover:bg-orange-500/20'} px-4 py-3 rounded-xl transition-colors text-base font-bold focus:ring-2 focus:ring-orange-500 outline-none`}>
+                                        <i className="ph-bold ph-broom text-xl"></i>
+                                        <span>Start New Project</span>
+                                    </button>
+
+                                    <div className={`h-px w-full ${t.border} my-2`}></div>
+
+                                    <div className="space-y-2">
+                                        <label className={`block text-xs uppercase tracking-wider font-semibold ${t.textMuted}`}>Theme</label>
+                                        <div className={`flex p-1 rounded-xl ${theme === 'light' ? 'bg-gray-100' : 'bg-gray-800'}`}>
+                                            <button onClick={() => setTheme('light')} className={`flex-1 flex items-center justify-center py-2 rounded-lg text-sm font-medium transition-all ${theme === 'light' ? 'bg-white shadow-sm text-purple-600' : t.textMuted}`}><i className="ph-bold ph-sun text-base mr-1.5"></i> Light</button>
+                                            <button onClick={() => setTheme('dark')} className={`flex-1 flex items-center justify-center py-2 rounded-lg text-sm font-medium transition-all ${theme === 'dark' ? 'bg-gray-600 shadow-sm text-white' : t.textMuted}`}><i className="ph-bold ph-moon text-base mr-1.5"></i> Dark</button>
+                                            <button onClick={() => setTheme('amoled')} className={`flex-1 flex items-center justify-center py-2 rounded-lg text-sm font-medium transition-all ${theme === 'amoled' ? 'bg-black shadow-sm text-purple-400 border border-gray-800' : t.textMuted}`}><i className="ph-bold ph-monitor text-base mr-1.5"></i> Amoled</button>
+                                        </div>
+                                    </div>
+                                    <button onClick={handleInstallClick} className={`w-full flex items-center justify-center space-x-2 ${theme === 'light' ? 'bg-green-50 text-green-600 hover:bg-green-100' : 'bg-green-500/10 text-green-400 hover:bg-green-500/20'} px-4 py-3 rounded-xl transition-colors text-base font-medium focus:ring-2 focus:ring-green-500 outline-none`}>
+                                        <i className="ph-bold ph-device-mobile text-xl"></i>
+                                        <span>Install as Web App</span>
+                                    </button>
+                                    <button onClick={() => { setShowApiSettings(true); setShowSettings(false); }} className={`w-full flex items-center justify-center space-x-2 ${theme === 'light' ? 'bg-blue-50 text-blue-600 hover:bg-blue-100' : 'bg-blue-500/10 text-blue-400 hover:bg-blue-500/20'} px-4 py-3 rounded-xl transition-colors text-base font-medium focus:ring-2 focus:ring-blue-500 outline-none`}>
+                                        <i className="ph-bold ph-key text-xl"></i>
+                                        <span>AI API Settings</span>
+                                    </button>
+                                    <div className={`h-px w-full ${t.border} my-2`}></div>
+                                    <div className="flex gap-2">
+                                        <button onClick={triggerFileInput} className={`flex-1 flex items-center justify-center space-x-2 ${theme === 'light' ? 'bg-gray-100 hover:bg-gray-200' : 'bg-gray-800 hover:bg-gray-700'} px-4 py-3 rounded-xl transition-colors text-sm font-medium focus:ring-2 focus:ring-purple-500 outline-none`}>
+                                            <i className="ph-bold ph-upload-simple text-lg"></i> <span>Import</span>
+                                        </button>
+                                        <button onClick={handleExport} className="flex-1 flex items-center justify-center space-x-2 bg-purple-600 hover:bg-purple-500 text-white px-4 py-3 rounded-xl transition-colors text-sm font-medium shadow-lg shadow-purple-900/20 outline-none">
+                                            <i className="ph-bold ph-download-simple text-lg"></i> <span>Export</span>
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+
+                            <div className="p-4 flex-shrink-0 relative z-10 space-y-3 border-b border-transparent">
+                                <div>
+                                    <label htmlFor="lorebookName" className={`block text-sm font-medium ${t.textMuted} mb-2`}>Lorebook Title</label>
+                                    <input id="lorebookName" type="text" value={lorebookName} onChange={(e) => setLorebookName(e.target.value)} className={`w-full rounded-xl px-4 py-3 text-base border focus:outline-none focus:ring-2 transition-all ${t.input}`} placeholder="Enter Lorebook Name..." />
+                                </div>
+                                <button onClick={() => setShowGlobalAiPrompt(!showGlobalAiPrompt)} className={`w-full flex items-center justify-center space-x-2 py-3 rounded-xl border border-dashed border-purple-500/50 text-purple-400 hover:bg-purple-500/10 transition-colors text-sm font-medium outline-none focus:ring-2 focus:ring-purple-500`}>
+                                    <i className="ph-bold ph-magic-wand text-lg"></i>
+                                    <span>Generate Lorebook with Suzu</span>
+                                </button>
+                                {showGlobalAiPrompt && (
+                                    <div className={`p-4 rounded-2xl border ${theme === 'light' ? 'bg-purple-50 border-purple-200' : 'bg-purple-500/10 border-purple-500/30'} flex flex-col gap-3 animate-in slide-in-from-top-2`}>
+                                        <div className="flex items-center space-x-2 text-purple-400 mb-1">
+                                            <i className="ph-fill ph-cat text-xl"></i>
+                                            <span className="text-sm font-bold">What should Suzu build?</span>
+                                        </div>
+                                        <textarea value={globalAiPrompt} onChange={(e) => setGlobalAiPrompt(e.target.value)} placeholder="e.g. A cyberpunk city run by feline corporations..." className={`w-full rounded-xl px-4 py-3 text-sm border focus:outline-none focus:ring-2 focus:ring-purple-500/50 resize-y min-h-[80px] ${theme === 'light' ? 'bg-white border-purple-200 text-gray-900' : 'bg-[#1a1a1a] border-purple-500/30 text-white'}`} disabled={isGeneratingGlobal} />
+                                        <button onClick={handleGenerateGlobalAI} disabled={isGeneratingGlobal} className={`w-full py-3 rounded-xl bg-purple-600 hover:bg-purple-500 text-white flex items-center justify-center space-x-2 transition-all ${isGeneratingGlobal ? 'opacity-50 cursor-not-allowed' : 'shadow-lg shadow-purple-900/20'}`}>
+                                            {isGeneratingGlobal ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div> : <i className="ph-bold ph-paper-plane-right text-xl"></i>}
+                                            <span>Generate Lorebook</span>
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                            
+                            <div className="flex-1 overflow-y-auto px-3 pb-4 space-y-2 scrollbar-hide relative z-10 pt-2 border-t border-gray-800/30">
+                                {entries.map((entry) => (
+                                    <button key={entry.uid} onClick={() => handleSelectEntry(entry.uid)} className={`w-full text-left p-4 rounded-2xl transition-all flex flex-col gap-1 focus:outline-none focus:ring-2 focus:ring-purple-500 group border ${selectedEntryId === entry.uid && !isEditing ? t.active : `${t.itemBg} border-transparent ${t.hover}`}`}>
+                                        <div className="flex items-center justify-between w-full">
+                                            <span className={`text-base font-semibold truncate pr-2 ${!entry.enabled ? 'text-gray-400 line-through opacity-70' : t.text}`}>{entry.name || "Unnamed Entry"}</span>
+                                            <div onClick={(e) => { e.stopPropagation(); confirmDelete(entry.uid); }} className={`hidden md:flex p-2 -mr-2 ${t.textMuted} hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg ${theme === 'light' ? 'hover:bg-gray-200' : 'hover:bg-gray-800'}`} title="Delete Entry">
+                                                <i className="ph-bold ph-trash text-lg"></i>
+                                            </div>
+                                        </div>
+                                        <span className={`text-sm ${t.textMuted} truncate w-full`}>{entry.keys.length > 0 ? entry.keys.join(', ') : 'No activation keys'}</span>
+                                    </button>
+                                ))}
+                            </div>
+                            
+                            {/* THE FIXED ADD BUTTON */}
+                            <div className={`p-4 ${t.bg} border-t ${t.border} z-20 mt-auto`}>
+                                <button onClick={handleAddEntry} className={`w-full flex items-center justify-center space-x-2 ${theme === 'light' ? 'bg-gray-200 hover:bg-gray-300 text-gray-800' : 'bg-gray-800 hover:bg-gray-700 text-white'} rounded-xl shadow-sm transition-transform active:scale-95 focus:ring-4 focus:ring-gray-500/30 outline-none py-3`} aria-label="Add New Entry">
+                                    <i className="ph-bold ph-plus text-lg"></i>
+                                    <span className="font-medium text-base">Blank Entry</span>
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* EDITOR */}
+                        <div className={`flex-1 flex flex-col h-full ${t.bg} transition-transform duration-300 ease-in-out ${isEditing ? 'translate-x-0' : 'translate-x-full md:translate-x-0 absolute inset-0 md:relative'}`}>
+                            {selectedEntry ? (
+                                <>
+                                    <header className={`px-4 py-4 border-b ${t.border} ${t.header} backdrop-blur-md sticky top-0 z-20 flex justify-between items-center`}>
+                                        <div className="flex items-center space-x-2">
+                                            <button onClick={handleBackToList} className={`md:hidden p-2 -ml-2 ${t.textMuted} hover:${t.text} ${theme === 'light' ? 'hover:bg-gray-100' : 'hover:bg-gray-800'} rounded-xl transition-colors focus:ring-2 focus:ring-purple-500 outline-none`} aria-label="Back to list">
+                                                <i className="ph-bold ph-caret-left text-2xl"></i>
+                                            </button>
+                                            <span className={`font-medium ${t.text} truncate max-w-[200px] md:max-w-xs`}>{selectedEntry.name || "Editing Entry"}</span>
+                                        </div>
+                                        <div className="hidden md:flex items-center space-x-3">
+                                            <button onClick={toggleFullscreen} className={`p-2.5 ${t.textMuted} hover:${t.text} ${theme === 'light' ? 'bg-gray-100 hover:bg-gray-200' : 'bg-gray-900 hover:bg-gray-800'} border ${t.border} rounded-xl transition-colors outline-none`} title="Toggle Fullscreen">
+                                                {isFullscreen ? <i className="ph-bold ph-corners-in text-xl"></i> : <i className="ph-bold ph-corners-out text-xl"></i>}
+                                            </button>
+                                        </div>
+                                    </header>
+
+                                    <div className="flex-1 overflow-y-auto p-4 md:p-8">
+                                        <div className="max-w-3xl mx-auto space-y-6 md:space-y-8 pb-10">
+                                            <div onClick={() => handleUpdateEntry(selectedEntry.uid, 'enabled', !selectedEntry.enabled)} className={`flex items-center justify-between p-4 ${t.panel} border ${t.border} rounded-2xl cursor-pointer hover:border-purple-500/50 transition-colors`}>
+                                                <div className="flex flex-col">
+                                                    <span className={`text-base font-semibold ${t.text}`}>Entry Status</span>
+                                                    <span className={`text-sm ${t.textMuted}`}>{selectedEntry.enabled ? 'Active and injecting into prompts' : 'Disabled (Ignored)'}</span>
+                                                </div>
+                                                <div className={`relative inline-flex h-8 w-14 flex-shrink-0 items-center rounded-full transition-colors ${selectedEntry.enabled ? 'bg-purple-500' : (theme === 'light' ? 'bg-gray-300' : 'bg-gray-700')}`}>
+                                                    <span className={`inline-block h-6 w-6 transform rounded-full bg-white transition-transform shadow-sm ${selectedEntry.enabled ? 'translate-x-7' : 'translate-x-1'}`} />
+                                                </div>
+                                            </div>
+
+                                            <div className="space-y-2">
+                                                <label htmlFor="entryName" className={`block text-sm font-semibold ${t.text} ml-1`}>Entry Name</label>
+                                                <input id="entryName" type="text" value={selectedEntry.name} onChange={(e) => handleUpdateEntry(selectedEntry.uid, 'name', e.target.value)} className={`w-full rounded-2xl px-5 py-4 text-lg border focus:outline-none focus:ring-2 transition-all ${t.input}`} placeholder="e.g., The Ancient City" />
+                                            </div>
+
+                                            <div className="space-y-2">
+                                                <label htmlFor="entryKeys" className={`flex items-center justify-between text-sm font-semibold ${t.text} ml-1`}>
+                                                    <span>Activation Keys</span>
+                                                    <span className={`text-xs ${t.textMuted} font-normal`}>Comma separated</span>
+                                                </label>
+                                                <input id="entryKeys" type="text" value={selectedEntry.keys.join(', ')} onChange={(e) => { const keysArray = e.target.value.split(',').map(k => k.trimStart()); handleUpdateEntry(selectedEntry.uid, 'keys', keysArray.filter(k => k !== ' ')); }} onBlur={(e) => { const keysArray = e.target.value.split(',').map(k => k.trim()).filter(k => k !== ''); handleUpdateEntry(selectedEntry.uid, 'keys', keysArray); }} className={`w-full rounded-2xl px-5 py-4 text-base border focus:outline-none focus:ring-2 transition-all font-mono ${t.input}`} placeholder="e.g., city, ancient, ruins" />
+                                            </div>
+
+                                            <div className="space-y-3 flex flex-col">
+                                                <div className="flex items-center justify-between ml-1">
+                                                    <label htmlFor="entryContent" className={`block text-sm font-semibold ${t.text}`}>Lore Content</label>
+                                                    <button onClick={() => setShowAiPrompt(!showAiPrompt)} className="flex items-center space-x-1.5 text-purple-500 hover:text-purple-400 font-medium text-sm transition-colors">
+                                                        <i className="ph-bold ph-sparkle text-base"></i>
+                                                        <span>Expand with Suzu</span>
+                                                    </button>
+                                                </div>
+
+                                                {showAiPrompt && (
+                                                    <div className={`p-4 rounded-2xl border ${theme === 'light' ? 'bg-purple-50 border-purple-200' : 'bg-purple-500/10 border-purple-500/30'} flex flex-col gap-3 animate-in slide-in-from-top-2`}>
+                                                        <div className="flex items-center space-x-2 text-purple-400 mb-1">
+                                                            <i className="ph-fill ph-cat text-xl"></i>
+                                                            <span className="text-sm font-bold">Suzu is ready to write!</span>
+                                                        </div>
+                                                        <div className="flex gap-2 relative">
+                                                            <input type="text" value={aiPrompt} onChange={(e) => setAiPrompt(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleGenerateAI()} placeholder="Describe what Suzu should add to this entry..." className={`flex-1 rounded-xl px-4 py-3 text-sm border focus:outline-none focus:ring-2 focus:ring-purple-500/50 ${theme === 'light' ? 'bg-white border-purple-200 text-gray-900' : 'bg-[#1a1a1a] border-purple-500/30 text-white'}`} disabled={isGenerating} />
+                                                            <button onClick={handleGenerateAI} disabled={isGenerating} className={`p-3 rounded-xl bg-purple-600 hover:bg-purple-500 text-white flex items-center justify-center transition-all ${isGenerating ? 'opacity-50 cursor-not-allowed' : 'shadow-lg shadow-purple-900/20'}`}>
+                                                                {isGenerating ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div> : <i className="ph-bold ph-paper-plane-right text-xl"></i>}
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                )}
+
+                                                <textarea id="entryContent" value={selectedEntry.content} onChange={(e) => handleUpdateEntry(selectedEntry.uid, 'content', e.target.value)} className={`w-full min-h-[350px] rounded-2xl px-5 py-4 text-base border focus:outline-none focus:ring-2 transition-all resize-y leading-relaxed ${t.input}`} placeholder="Describe the details, secrets, and context here..." />
+                                            </div>
+
+                                            <div className={`pt-8 pb-12 border-t ${t.border} mt-8`}>
+                                                <button onClick={() => confirmDelete(selectedEntry.uid, 'entry')} className="w-full md:w-auto flex items-center justify-center space-x-2 px-6 py-4 rounded-xl text-red-500 bg-red-500/10 hover:bg-red-500/20 transition-colors font-medium text-base focus:ring-2 focus:ring-red-500/50 outline-none">
+                                                    <i className="ph-bold ph-trash text-xl"></i>
+                                                    <span>Delete This Entry</span>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </>
+                            ) : (
+                                <div className={`hidden md:flex flex-1 flex-col items-center justify-center ${t.textMuted} space-y-6 p-8 text-center`}>
+                                    <div className={`p-6 ${t.panel} rounded-full border ${t.border}`}>
+                                        <i className={`ph-light ph-file-code text-6xl ${theme === 'light' ? 'text-gray-300' : 'text-gray-700'}`}></i>
+                                    </div>
+                                    <div className="space-y-2">
+                                        <h3 className={`text-xl font-bold ${t.text}`}>No Entry Selected</h3>
+                                        <p className={`text-base ${t.textMuted} max-w-sm`}>Select an entry from the sidebar or create a new one to start writing your lore.</p>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
+
+
