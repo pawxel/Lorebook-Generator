@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none" stroke="#ffffff" stroke-width="24" stroke-linecap="round" stroke-linejoin="round">
+  <!-- Soft Face/Chin shape -->
+  <path d="M156 360 C 156 460, 356 460, 356 360" /> 
+  
+  <!-- Hair/Head outline -->
+  <path d="M110 260 C 110 120, 402 120, 402 260" />
+  <path d="M110 260 L 110 380 C 110 380, 156 360, 156 360" />
+  <path d="M402 260 L 402 380 C 402 380, 356 360, 356 360" />
+
+  <!-- Big Cat Ears -->
+  <path d="M 140 180 L 90 40 L 230 130" />
+  <path d="M 372 180 L 422 40 L 282 130" />
+
+  <!-- Inner Ear details -->
+  <path d="M 150 150 L 130 80 L 180 130" stroke-width="16" />
+  <path d="M 362 150 L 382 80 L 332 130" stroke-width="16" />
+
+  <!-- Grumpy Eyes (\ /) -->
+  <path d="M 170 250 L 230 270" stroke-width="32" />
+  <path d="M 342 250 L 282 270" stroke-width="32" />
+
+  <!-- Pouty Cat Mouth (Wide ^ shape) -->
+  <path d="M 236 330 Q 256 300 276 330" stroke-width="20" />
+
+  <!-- Angry Anime Vein/Pop Mark -->
+  <path d="M 380 90 L 420 130 M 420 90 L 380 130" stroke-width="16" />
+  
+  <!-- Cute little blush lines -->
+  <path d="M 170 310 L 190 310 M 165 325 L 185 325" stroke-width="12" />
+  <path d="M 322 310 L 342 310 M 327 325 L 347 325" stroke-width="12" />
+</svg>
+
