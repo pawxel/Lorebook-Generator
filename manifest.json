@@ -5,7 +5,7 @@
   "display": "standalone",
   "background_color": "#030712",
   "theme_color": "#a855f7",
-  "description": "Your personal, AI-powered lorebook generator, crafted by your favorite undercover kitty.",
+  "description": "Your personal, AI-powered lorebook generator.",
   "orientation": "any",
   "icons": [
     {
